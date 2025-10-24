@@ -51,6 +51,7 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
       if (!yolo.isLoaded) {
         await yolo.load();
       }
+      await yolo.ensureWarmedUp();
 
       if (active != null) {
         _controller = CameraController(
@@ -133,6 +134,8 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
     Emitter<ScanState> emit,
   ) async {
     if (!state.isReady || _controller == null) return;
+
+    await yolo.ensureWarmedUp();
 
     await _controller!.startImageStream((image) {
       final rotationDegrees = _controller!.description.sensorOrientation;
