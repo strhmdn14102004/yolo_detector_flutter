@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:equatable/equatable.dart';
+import 'scan_state.dart';
 
 abstract class ScanEvent extends Equatable {
   @override
@@ -21,4 +22,20 @@ class ScanOnCameraImage extends ScanEvent {
 
   @override
   List<Object?> get props => [image, rotationDegrees];
+}
+
+// Ganti mode manual lewat UI
+class ScanModeChanged extends ScanEvent {
+  final ScanMode mode;
+  ScanModeChanged(this.mode);
+  @override
+  List<Object?> get props => [mode];
+}
+
+// Toggle smart fallback
+class ScanSmartFallbackToggled extends ScanEvent {
+  final bool enabled;
+  ScanSmartFallbackToggled(this.enabled);
+  @override
+  List<Object?> get props => [enabled];
 }

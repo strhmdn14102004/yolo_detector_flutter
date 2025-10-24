@@ -4,7 +4,17 @@ import 'dart:ui';
 
 import 'package:image/image.dart' as img;
 
-Float32List yuv420ToRgbNormalizedResizeCompute(Map<String, dynamic> args) {
+/// Konversi YUV420 -> RGB, resize ke [dst] dan keluarkan NHWC:
+/// - jika targetType == 'float32': Float32List [0..1]
+/// - jika targetType == 'int8'   : Int8List terkuantisasi dg (scale, zeroPoint)
+///
+/// Argumen yang wajib:
+/// width, height, dst,
+/// y, u, v (Uint8List),
+/// yRowStride, uvRowStride, uvPixelStride,
+/// targetType ('float32' | 'int8'),
+/// inScale (double), inZeroPoint (int) -> hanya dipakai untuk 'int8'
+Object yuv420ToNhwcQuantAwareCompute(Map<String, dynamic> args) {
   final int width = args['width'] as int;
   final int height = args['height'] as int;
   final int dst = args['dst'] as int;
@@ -17,6 +27,11 @@ Float32List yuv420ToRgbNormalizedResizeCompute(Map<String, dynamic> args) {
   final int uvRowStride = args['uvRowStride'] as int;
   final int uvPixelStride = args['uvPixelStride'] as int;
 
+  final String targetType = args['targetType'] as String;
+  final double inScale = (args['inScale'] ?? 1.0) as double;
+  final int inZeroPoint = (args['inZeroPoint'] ?? 0) as int;
+
+  // YUV420 -> RGB (image lib)
   final img.Image rgbImage = img.Image(width: width, height: height);
 
   for (int y = 0; y < height; y++) {
@@ -49,24 +64,54 @@ Float32List yuv420ToRgbNormalizedResizeCompute(Map<String, dynamic> args) {
     }
   }
 
+  // Resize ke ukuran input model
   final img.Image resized = img.copyResize(
     rgbImage,
     width: dst,
     height: dst,
-    interpolation: img.Interpolation.cubic,
+    interpolation: img.Interpolation.linear,
   );
 
-  final Float32List out = Float32List(dst * dst * 3);
-  int i = 0;
-  for (int y = 0; y < dst; y++) {
-    for (int x = 0; x < dst; x++) {
-      final img.Pixel p = resized.getPixel(x, y);
-      out[i++] = p.r / 255.0;
-      out[i++] = p.g / 255.0;
-      out[i++] = p.b / 255.0;
+  if (targetType == 'int8') {
+    // Kuantisasi: q = round(zp + (float/255)/scale)
+    final Int8List out = Int8List(dst * dst * 3);
+    int i = 0;
+    for (int y = 0; y < dst; y++) {
+      for (int x = 0; x < dst; x++) {
+        final p = resized.getPixel(x, y);
+        final rn = (p.r / 255.0);
+        final gn = (p.g / 255.0);
+        final bn = (p.b / 255.0);
+
+        int rq = (inZeroPoint + rn / inScale).round();
+        int gq = (inZeroPoint + gn / inScale).round();
+        int bq = (inZeroPoint + bn / inScale).round();
+
+        // int8 clamp -128..127
+        rq = rq.clamp(-128, 127);
+        gq = gq.clamp(-128, 127);
+        bq = bq.clamp(-128, 127);
+
+        out[i++] = rq;
+        out[i++] = gq;
+        out[i++] = bq;
+      }
     }
+    return out;
+  } else {
+    // FLOAT32 [0..1]
+    final Float32List out = Float32List(dst * dst * 3);
+    int i = 0;
+    for (int y = 0; y < dst; y++) {
+      for (int x = 0; x < dst; x++) {
+        final p = resized.getPixel(x, y);
+        out[i++] = p.r / 255.0;
+        out[i++] = p.g / 255.0;
+        out[i++] = p.b / 255.0;
+      }
+    }
+    return out;
   }
-  return out;
 }
 
 Rect projectBoxToPreview(
@@ -102,17 +147,11 @@ List<int> nonMaxSuppression(
       final Rect a = boxes[current];
       final Rect b = boxes[other];
       final double inter =
-          (math.max(
-            0.0,
-            math.min(a.right, b.right) - math.max(a.left, b.left),
-          )) *
-          (math.max(
-            0.0,
-            math.min(a.bottom, b.bottom) - math.max(a.top, b.top),
-          ));
-      final double union = a.width * a.height + b.width * b.height - inter;
-      final double iou = union == 0 ? 0 : inter / union;
-      return iou > iouThreshold;
+          (math.max(0.0, math.min(a.right, b.right) - math.max(a.left, b.left))) *
+          (math.max(0.0, math.min(a.bottom, b.bottom) - math.max(a.top, b.top)));
+    final double union = a.width * a.height + b.width * b.height - inter;
+    final double iou = union == 0 ? 0 : inter / union;
+    return iou > iouThreshold;
     });
   }
   return keep;

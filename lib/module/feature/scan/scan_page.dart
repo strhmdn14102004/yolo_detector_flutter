@@ -48,7 +48,7 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(state.message),
-              duration: const Duration(milliseconds: 800),
+              duration: const Duration(milliseconds: 700),
             ),
           );
         }
@@ -57,6 +57,9 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
           p.isReady != c.isReady ||
           p.isStreaming != c.isStreaming ||
           p.activeCamera != c.activeCamera ||
+          p.mode != c.mode ||
+          p.smartFallback != c.smartFallback ||
+          p.fps != c.fps ||
           !listEquals(p.detections, c.detections),
       builder: (context, state) {
         final bloc = context.read<ScanBloc>();
@@ -66,6 +69,15 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
           appBar: AppBar(
             title: const Text("YOLO11 TFLite Scanner"),
             actions: [
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text(
+                    state.fps > 0 ? "FPS ${state.fps.toStringAsFixed(1)}" : "FPS -",
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.cameraswitch),
                 onPressed: state.isReady
@@ -77,9 +89,46 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
           ),
           body: !state.isReady || ctrl == null
               ? const Center(child: CircularProgressIndicator())
-              : _PreviewWithOverlay(
-                  controller: ctrl,
-                  detections: state.detections,
+              : Column(
+                  children: [
+                    // Toolbar mode
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                      child: Row(
+                        children: [
+                          SegmentedButton<ScanMode>(
+                            segments: const [
+                              ButtonSegment(
+                                  value: ScanMode.fast, label: Text("FAST")),
+                              ButtonSegment(
+                                  value: ScanMode.accurate,
+                                  label: Text("AKURAT")),
+                            ],
+                            selected: {state.mode},
+                            onSelectionChanged: (set) {
+                              final mode = set.first;
+                              context.read<ScanBloc>().add(ScanModeChanged(mode));
+                            },
+                          ),
+                          const SizedBox(width: 12),
+                          FilterChip(
+                            label: const Text("Smart"),
+                            tooltip: "Auto fallback/return",
+                            selected: state.smartFallback,
+                            onSelected: (v) => context
+                                .read<ScanBloc>()
+                                .add(ScanSmartFallbackToggled(v)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _PreviewWithOverlay(
+                        controller: ctrl,
+                        detections: state.detections,
+                      ),
+                    ),
+                  ],
                 ),
           bottomNavigationBar: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -89,8 +138,8 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
                   child: ElevatedButton.icon(
                     onPressed: state.isReady && !state.isStreaming
                         ? () => context.read<ScanBloc>().add(
-                            ScanStartStreamRequested(),
-                          )
+                              ScanStartStreamRequested(),
+                            )
                         : null,
                     icon: const Icon(Icons.play_arrow),
                     label: const Text("Start"),
@@ -101,8 +150,8 @@ class _ScanPageState extends State<ScanPage> with WidgetsBindingObserver {
                   child: ElevatedButton.icon(
                     onPressed: state.isReady && state.isStreaming
                         ? () => context.read<ScanBloc>().add(
-                            ScanStopStreamRequested(),
-                          )
+                              ScanStopStreamRequested(),
+                            )
                         : null,
                     icon: const Icon(Icons.stop),
                     label: const Text("Stop"),
@@ -129,6 +178,7 @@ class _PreviewWithOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Size pv = controller.value.previewSize!;
+    // Rotasi portrait => (width,height) tertukar
     final double srcW = pv.height;
     final double srcH = pv.width;
 
@@ -137,6 +187,7 @@ class _PreviewWithOverlay extends StatelessWidget {
         final double dstW = constraints.maxWidth;
         final double dstH = constraints.maxHeight;
 
+        // Fit kamera di tengah (cover), sama seperti CameraPreview
         final double scale = math.max(dstW / srcW, dstH / srcH);
         final double paintW = srcW * scale;
         final double paintH = srcH * scale;
@@ -148,11 +199,9 @@ class _PreviewWithOverlay extends StatelessWidget {
             child: RepaintBoundary(
               child: CameraPreview(
                 controller,
-
                 child: CustomPaint(
                   painter: _DetectionsPainter(
                     detections,
-
                     logicalW: srcW,
                     logicalH: srcH,
                   ),
@@ -168,7 +217,6 @@ class _PreviewWithOverlay extends StatelessWidget {
 
 class _DetectionsPainter extends CustomPainter {
   final List<DetectionResult> dets;
-
   final double logicalW;
   final double logicalH;
 
@@ -180,6 +228,7 @@ class _DetectionsPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // preview logical -> actual size
     final double sx = size.width / logicalW;
     final double sy = size.height / logicalH;
 
@@ -202,7 +251,7 @@ class _DetectionsPainter extends CustomPainter {
         1,
         (d.label.hashCode % 360).toDouble(),
         0.8,
-        0.9,
+        0.95,
       ).toColor();
 
       final Rect r = Rect.fromLTWH(
@@ -212,32 +261,31 @@ class _DetectionsPainter extends CustomPainter {
         d.box.height * sy,
       );
 
+      // kotak
       canvas.drawRect(r, paintBox);
 
-      final String caption =
-          "${d.label} ${(d.score * 100).toStringAsFixed(1)}%";
+      // label + score
+      final String caption = "${d.label} ${(d.score * 100).toStringAsFixed(1)}%";
       final TextPainter tp = TextPainter(
         text: TextSpan(text: caption, style: textStyle),
         textDirection: TextDirection.ltr,
         maxLines: 1,
         ellipsis: '…',
-      )..layout(maxWidth: size.width * 0.8);
+      )..layout(maxWidth: size.width * 0.9);
 
       final double tagLeft = r.left.clamp(0.0, size.width - tp.width - 8);
-      final double tagTop = (r.top - tp.height - 6).clamp(
-        0.0,
-        size.height - tp.height - 6,
-      );
+      // coba di atas kotak, kalau mentok naikkan ke dalam
+      double tagTop = r.top - tp.height - 6;
+      if (tagTop < 0) tagTop = r.top + 2;
+
       final Rect tag = Rect.fromLTWH(
         tagLeft,
         tagTop,
         tp.width + 8,
         tp.height + 4,
       );
-
       final RRect rr = RRect.fromRectAndRadius(tag, const Radius.circular(6));
       canvas.drawRRect(rr, paintBg);
-
       tp.paint(canvas, Offset(tag.left + 4, tag.top + 2));
     }
   }
