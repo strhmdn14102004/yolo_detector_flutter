@@ -20,7 +20,7 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
   bool _busy = false;
   DateTime _lastRun = DateTime.fromMillisecondsSinceEpoch(0);
 
-  final int _intervalMs = Platform.isIOS ? 0 : 120;
+  final int _intervalMs = 120;
 
   DateTime _winStart = DateTime.now();
 
