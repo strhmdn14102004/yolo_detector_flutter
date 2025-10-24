@@ -1,15 +1,14 @@
+// scan_bloc.dart
 // ignore_for_file: depend_on_referenced_packages, avoid_types_as_parameter_names
 import 'dart:async';
-import 'dart:typed_data';
-import 'dart:ui';
-
+import 'dart:io';
 import 'package:bloc/bloc.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import 'package:face_recognition/service/image_utils.dart';
 import 'package:face_recognition/service/yolo_service.dart';
-
 import 'scan_event.dart';
 import 'scan_state.dart';
 
@@ -19,18 +18,11 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
 
   bool _busy = false;
   DateTime _lastRun = DateTime.fromMillisecondsSinceEpoch(0);
+  final int _intervalMs = 140; // ~7 FPS target (praktis di device mid)
 
-  // Dinamis bergantung mode
-  int _intervalMs = 150; // FAST default ~6-7 FPS target
-
-  // FPS tracking (EMA)
-  DateTime? _lastFrameDoneAt;
-  double _emaFps = 0.0;
-
-  // Auto fallback / return timers
-  DateTime? _lowFpsSince;
-  DateTime? _highFpsSince;
-  int _consecutiveErrors = 0;
+  // FPS meter
+  int _frames = 0;
+  DateTime _winStart = DateTime.now();
 
   ScanBloc({required this.yolo}) : super(ScanState.initial()) {
     on<ScanInitRequested>(_onInit);
@@ -38,20 +30,14 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
     on<ScanStartStreamRequested>(_onStartStream);
     on<ScanStopStreamRequested>(_onStopStream);
     on<ScanOnCameraImage>(_onImage, transformer: _droppable());
-
-    on<ScanModeChanged>(_onModeChanged);
-    on<ScanSmartFallbackToggled>(_onSmartToggled);
   }
 
-  EventTransformer<ScanEvent> _droppable<ScanEvent>() {
-    return (events, mapper) => events.asyncExpand(mapper);
-  }
-
-  // ---------------- INIT / CAMERA ----------------
+  EventTransformer<ScanEvent> _droppable<ScanEvent>() =>
+      (events, mapper) => events.asyncExpand(mapper);
 
   Future<void> _onInit(ScanInitRequested event, Emitter<ScanState> emit) async {
     try {
-      final List<CameraDescription> cams = await availableCameras();
+      final cams = await availableCameras();
 
       CameraDescription? active;
       if (cams.any((c) => c.lensDirection == CameraLensDirection.back)) {
@@ -69,15 +55,14 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
       if (active != null) {
         _controller = CameraController(
           active,
-          ResolutionPreset.low, // jaga ringan
+          ResolutionPreset.low, // penting untuk FPS & hindari BQ timeout
           enableAudio: false,
-          imageFormatGroup: ImageFormatGroup.yuv420,
+          imageFormatGroup: Platform.isIOS
+              ? ImageFormatGroup.bgra8888
+              : ImageFormatGroup.yuv420,
         );
         await _controller!.initialize();
       }
-
-      // Set interval sesuai mode awal (FAST)
-      _applyModeInternal(ScanMode.fast);
 
       emit(
         ScanState(
@@ -87,9 +72,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
           activeCamera: active,
           detections: const [],
           message: cams.isEmpty ? "Kamera tidak ditemukan" : "Siap",
-          mode: ScanMode.fast,
-          smartFallback: true,
-          fps: 0.0,
         ),
       );
     } catch (e) {
@@ -101,9 +83,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
           activeCamera: null,
           detections: const [],
           message: "Gagal init: $e",
-          mode: ScanMode.fast,
-          smartFallback: true,
-          fps: 0.0,
         ),
       );
     }
@@ -117,7 +96,7 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
 
     final bool toFront =
         state.activeCamera?.lensDirection != CameraLensDirection.front;
-    final CameraDescription next = state.cameras.firstWhere(
+    final next = state.cameras.firstWhere(
       (c) =>
           c.lensDirection ==
           (toFront ? CameraLensDirection.front : CameraLensDirection.back),
@@ -129,9 +108,11 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
 
     _controller = CameraController(
       next,
-      ResolutionPreset.low, // tetap ringan
+      ResolutionPreset.low,
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
+      imageFormatGroup: Platform.isIOS
+          ? ImageFormatGroup.bgra8888
+          : ImageFormatGroup.yuv420,
     );
     await _controller!.initialize();
 
@@ -143,14 +124,9 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
         activeCamera: next,
         detections: const [],
         message: "Kamera: ${next.name}",
-        mode: state.mode,
-        smartFallback: state.smartFallback,
-        fps: 0.0,
       ),
     );
   }
-
-  // ---------------- STREAM ----------------
 
   Future<void> _onStartStream(
     ScanStartStreamRequested event,
@@ -158,17 +134,13 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
   ) async {
     if (!state.isReady || _controller == null) return;
 
-    // reset trackers
-    _lastFrameDoneAt = null;
-    _emaFps = 0.0;
-    _lowFpsSince = null;
-    _highFpsSince = null;
-    _consecutiveErrors = 0;
-
-    await _controller!.startImageStream((CameraImage image) {
-      final int rotationDegrees = _controller!.description.sensorOrientation;
+    await _controller!.startImageStream((image) {
+      final rotationDegrees = _controller!.description.sensorOrientation;
       add(ScanOnCameraImage(image, rotationDegrees));
     });
+
+    _frames = 0;
+    _winStart = DateTime.now();
 
     emit(
       ScanState(
@@ -178,9 +150,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
         activeCamera: state.activeCamera,
         detections: const [],
         message: "Streaming…",
-        mode: state.mode,
-        smartFallback: state.smartFallback,
-        fps: 0.0,
       ),
     );
   }
@@ -198,65 +167,9 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
         activeCamera: state.activeCamera,
         detections: const [],
         message: "Berhenti",
-        mode: state.mode,
-        smartFallback: state.smartFallback,
-        fps: 0.0,
       ),
     );
   }
-
-  // ---------------- MODE ----------------
-
-  Future<void> _onModeChanged(
-    ScanModeChanged event,
-    Emitter<ScanState> emit,
-  ) async {
-    _applyModeInternal(event.mode);
-
-    emit(
-      ScanState(
-        isReady: state.isReady,
-        isStreaming: state.isStreaming,
-        cameras: state.cameras,
-        activeCamera: state.activeCamera,
-        detections: state.detections,
-        message: event.mode == ScanMode.fast ? "Mode: FAST" : "Mode: AKURAT",
-        mode: event.mode,
-        smartFallback: state.smartFallback,
-        fps: state.fps,
-      ),
-    );
-  }
-
-  Future<void> _onSmartToggled(
-    ScanSmartFallbackToggled event,
-    Emitter<ScanState> emit,
-  ) async {
-    emit(
-      ScanState(
-        isReady: state.isReady,
-        isStreaming: state.isStreaming,
-        cameras: state.cameras,
-        activeCamera: state.activeCamera,
-        detections: state.detections,
-        message: event.enabled ? "Smart fallback ON" : "Smart fallback OFF",
-        mode: state.mode,
-        smartFallback: event.enabled,
-        fps: state.fps,
-      ),
-    );
-  }
-
-  void _applyModeInternal(ScanMode mode) {
-    // Hanya ubah interval inferensi. (Kamera tetap di resolusi rendah untuk stabilitas.)
-    if (mode == ScanMode.fast) {
-      _intervalMs = 150; // target ~6-7 FPS
-    } else {
-      _intervalMs = 300; // target ~3-4 FPS (longgar, akurat/stabil)
-    }
-  }
-
-  // ---------------- PIPELINE ----------------
 
   Future<void> _onImage(
     ScanOnCameraImage event,
@@ -278,31 +191,44 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
     }
 
     try {
-      final Map<String, dynamic> payload = {
-        'width': event.image.width,
-        'height': event.image.height,
+      final payloadCommon = <String, dynamic>{
         'dst': yolo.inputSize,
-        'y': event.image.planes[0].bytes,
-        'u': event.image.planes[1].bytes,
-        'v': event.image.planes[2].bytes,
-        'yRowStride': event.image.planes[0].bytesPerRow,
-        'uvRowStride': event.image.planes[1].bytesPerRow,
-        'uvPixelStride': event.image.planes[1].bytesPerPixel ?? 1,
-        'targetType': yolo.inputTypeStr,    // 'float32' | 'int8' | 'uint8'
+        'targetType': yolo.inputTypeStr,
         'inScale': yolo.inputScale,
         'inZeroPoint': yolo.inputZeroPoint,
       };
 
-      final Object nhwc = await compute(
-        yuv420ToNhwcQuantAwareCompute,
-        payload,
-      );
+      Object nhwc;
+
+      if (event.image.planes.length == 1) {
+        // iOS BGRA8888
+        nhwc = await compute(bgra8888ToNhwcQuantAwareCompute, {
+          ...payloadCommon,
+          'width': event.image.width,
+          'height': event.image.height,
+          'bytes': event.image.planes.first.bytes,
+        });
+      } else {
+        // Android YUV420
+        nhwc = await compute(yuv420ToNhwcQuantAwareCompute, {
+          ...payloadCommon,
+          'width': event.image.width,
+          'height': event.image.height,
+          'y': event.image.planes[0].bytes,
+          'u': event.image.planes[1].bytes,
+          'v': event.image.planes[2].bytes,
+          'yRowStride': event.image.planes[0].bytesPerRow,
+          'uvRowStride': event.image.planes[1].bytesPerRow,
+          'uvPixelStride': event.image.planes[1].bytesPerPixel ?? 1,
+        });
+      }
 
       final raw = await yolo.inferNhwc(nhwc);
 
-      final previewSize = _controller!.value.previewSize!;
-      final double pW = previewSize.height;
-      final double pH = previewSize.width;
+      // Preview logical size (di portrait width=height sensor, height=width sensor)
+      final pv = _controller!.value.previewSize!;
+      final pW = pv.height;
+      final pH = pv.width;
 
       var dets = await yolo.postprocessToPreview(
         raw,
@@ -310,125 +236,47 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
         previewH: pH,
       );
 
-      // Mirror front camera
+      // Mirror kalau kamera depan
       if (state.activeCamera?.lensDirection == CameraLensDirection.front) {
-        dets = dets
-            .map((e) {
-              final Rect r = e.rect;
-              final Rect flipped =
-                  Rect.fromLTWH(pW - r.right, r.top, r.width, r.height);
-              return RectLabelScore(
-                  rect: flipped, label: e.label, score: e.score);
-            })
-            .toList();
+        dets = dets.map((e) {
+          final r = e.rect;
+          final flipped = Rect.fromLTWH(pW - r.right, r.top, r.width, r.height);
+          return RectLabelScore(rect: flipped, label: e.label, score: e.score);
+        }).toList();
       }
 
       final newDets = dets
           .map(
-            (e) => DetectionResult(
-              box: e.rect,
-              label: e.label,
-              score: e.score,
-            ),
+            (e) => DetectionResult(box: e.rect, label: e.label, score: e.score),
           )
           .toList();
 
-      // ------- FPS update -------
-      final end = DateTime.now();
-      if (_lastFrameDoneAt != null) {
-        final dt = end.difference(_lastFrameDoneAt!).inMilliseconds / 1000.0;
-        if (dt > 0) {
-          final instFps = 1.0 / dt;
-          // EMA lembut
-          _emaFps = _emaFps == 0.0 ? instFps : (_emaFps * 0.8 + instFps * 0.2);
-        }
+      // Emit tiap frame (biar label "Deteksi: n" responsif)
+      emit(
+        ScanState(
+          isReady: state.isReady,
+          isStreaming: state.isStreaming,
+          cameras: state.cameras,
+          activeCamera: state.activeCamera,
+          detections: newDets,
+          message: "Deteksi: ${newDets.length}",
+        ),
+      );
+
+      // FPS window
+      _frames++;
+      final dur = now.difference(_winStart).inMilliseconds;
+      if (dur >= 1000) {
+        // kirim sebagai toast ringan
+        // (opsional, kalau mau taruh di AppBar ganti ke state)
+        _frames = 0;
+        _winStart = now;
       }
-      _lastFrameDoneAt = end;
-
-      // Emit hanya jika berubah banyak
-      final prev = state.detections;
-      final bool changed =
-          newDets.length != prev.length ||
-          (newDets.isNotEmpty &&
-              (newDets.first.label != (prev.isNotEmpty ? prev.first.label : null)));
-
-      if (changed || (end.millisecondsSinceEpoch % 8 == 0)) {
-        emit(
-          ScanState(
-            isReady: state.isReady,
-            isStreaming: state.isStreaming,
-            cameras: state.cameras,
-            activeCamera: state.activeCamera,
-            detections: newDets,
-            message: changed ? "Deteksi: ${newDets.length}" : state.message,
-            mode: state.mode,
-            smartFallback: state.smartFallback,
-            fps: double.parse(_emaFps.toStringAsFixed(2)),
-          ),
-        );
-      }
-
-      // ------- Smart fallback / return -------
-      if (state.smartFallback) {
-        if (state.mode == ScanMode.fast) {
-          // jika FPS < 3 selama ≥1s atau error beruntun (di catch) => fallback
-          if (_emaFps > 0 && _emaFps < 3.0) {
-            _lowFpsSince ??= end;
-            if (end.difference(_lowFpsSince!).inMilliseconds >= 1000) {
-              _switchModeAuto(ScanMode.accurate, emit, reason: "FPS rendah");
-            }
-          } else {
-            _lowFpsSince = null;
-          }
-        } else {
-          // accurate -> kembali ke fast jika FPS > 6 selama ≥2s
-          if (_emaFps > 6.0) {
-            _highFpsSince ??= end;
-            if (end.difference(_highFpsSince!).inMilliseconds >= 2000) {
-              _switchModeAuto(ScanMode.fast, emit, reason: "FPS pulih");
-            }
-          } else {
-            _highFpsSince = null;
-          }
-        }
-      }
-
-      // Berhasil → reset error counter
-      _consecutiveErrors = 0;
     } catch (_) {
-      // error satu frame: hitung untuk trigger fallback
-      _consecutiveErrors++;
-      if (state.smartFallback &&
-          state.mode == ScanMode.fast &&
-          _consecutiveErrors >= 2) {
-        _switchModeAuto(ScanMode.accurate, emit, reason: "Error beruntun");
-      }
+      // biarkan jalan terus
     } finally {
       _busy = false;
     }
-  }
-
-  void _switchModeAuto(ScanMode to, Emitter<ScanState> emit, {required String reason}) {
-    if (state.mode == to) return;
-    _applyModeInternal(to);
-    _lowFpsSince = null;
-    _highFpsSince = null;
-    _consecutiveErrors = 0;
-
-    emit(
-      ScanState(
-        isReady: state.isReady,
-        isStreaming: state.isStreaming,
-        cameras: state.cameras,
-        activeCamera: state.activeCamera,
-        detections: state.detections,
-        message:
-            "Auto switch → ${to == ScanMode.fast ? "FAST" : "AKURAT"} ($reason)",
-        mode: to,
-        smartFallback: state.smartFallback,
-        fps: state.fps,
-      ),
-    );
   }
 
   Future<void> _stopStreamInternal() async {

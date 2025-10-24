@@ -37,12 +37,12 @@ class YoloService {
   }) async {
     final options = tfl.InterpreterOptions()..threads = 2;
 
-    if (Platform.isAndroid) {
-      try {
-        _gpu = tfl.GpuDelegateV2();
-        options.addDelegate(_gpu!);
-      } catch (_) {}
-    }
+    // if (Platform.isAndroid) {
+    //   try {
+    //     _gpu = tfl.GpuDelegateV2();
+    //     options.addDelegate(_gpu!);
+    //   } catch (_) {}
+    // }
 
     _interpreter = await tfl.Interpreter.fromAsset(assetPath, options: options);
     _loaded = true;

@@ -24,10 +24,10 @@ class ScanState extends Equatable {
   final List<DetectionResult> detections;
   final String message;
 
-  // Tambahan
-  final ScanMode mode;
-  final bool smartFallback; // FAST akan auto-fallback/return
-  final double fps; // moving average FPS
+  // // Tambahan
+  // final ScanMode mode;
+  // final bool smartFallback; // FAST akan auto-fallback/return
+  // final double fps; // moving average FPS
 
   const ScanState({
     required this.isReady,
@@ -36,9 +36,9 @@ class ScanState extends Equatable {
     required this.activeCamera,
     required this.detections,
     required this.message,
-    required this.mode,
-    required this.smartFallback,
-    required this.fps,
+    // required this.mode,
+    // required this.smartFallback,
+    // required this.fps,
   });
 
   factory ScanState.initial() => const ScanState(
@@ -48,9 +48,9 @@ class ScanState extends Equatable {
         activeCamera: null,
         detections: <DetectionResult>[],
         message: "Memuat…",
-        mode: ScanMode.fast,
-        smartFallback: true,
-        fps: 0.0,
+        // mode: ScanMode.fast,
+        // smartFallback: true,
+        // fps: 0.0,
       );
 
   @override
@@ -61,8 +61,8 @@ class ScanState extends Equatable {
         activeCamera,
         detections,
         message,
-        mode,
-        smartFallback,
-        fps,
+        // mode,
+        // smartFallback,
+        // fps,
       ];
 }
