@@ -1,5 +1,5 @@
-// scan_bloc.dart
-// ignore_for_file: depend_on_referenced_packages, avoid_types_as_parameter_names
+// ignore_for_file: avoid_types_as_parameter_names, depend_on_referenced_packages
+
 import 'dart:async';
 import 'dart:io';
 
@@ -19,9 +19,9 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
 
   bool _busy = false;
   DateTime _lastRun = DateTime.fromMillisecondsSinceEpoch(0);
-  final int _intervalMs = 140; // ~7 FPS target (praktis di device mid)
 
-  // FPS meter
+  final int _intervalMs = Platform.isIOS ? 0 : 120;
+
   DateTime _winStart = DateTime.now();
 
   ScanBloc({required this.yolo}) : super(ScanState.initial()) {
@@ -55,7 +55,7 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
       if (active != null) {
         _controller = CameraController(
           active,
-          ResolutionPreset.low, // penting untuk FPS & hindari BQ timeout
+          ResolutionPreset.low,
           enableAudio: false,
           imageFormatGroup: Platform.isIOS
               ? ImageFormatGroup.bgra8888
@@ -200,7 +200,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
       Object nhwc;
 
       if (event.image.planes.length == 1) {
-        // iOS BGRA8888
         nhwc = await compute(bgra8888ToNhwcQuantAwareCompute, {
           ...payloadCommon,
           'width': event.image.width,
@@ -208,7 +207,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
           'bytes': event.image.planes.first.bytes,
         });
       } else {
-        // Android YUV420
         nhwc = await compute(yuv420ToNhwcQuantAwareCompute, {
           ...payloadCommon,
           'width': event.image.width,
@@ -224,7 +222,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
 
       final raw = await yolo.inferNhwc(nhwc);
 
-      // Preview logical size (di portrait width=height sensor, height=width sensor)
       final pv = _controller!.value.previewSize!;
       final pW = pv.height;
       final pH = pv.width;
@@ -235,7 +232,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
         previewH: pH,
       );
 
-      // Mirror kalau kamera depan
       if (state.activeCamera?.lensDirection == CameraLensDirection.front) {
         dets = dets.map((e) {
           final r = e.rect;
@@ -250,7 +246,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
           )
           .toList();
 
-      // Emit tiap frame (biar label "Deteksi: n" responsif)
       emit(
         ScanState(
           isReady: state.isReady,
@@ -262,15 +257,11 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
         ),
       );
 
-      // FPS window
       final dur = now.difference(_winStart).inMilliseconds;
       if (dur >= 1000) {
-        // kirim sebagai toast ringan
-        // (opsional, kalau mau taruh di AppBar ganti ke state)
         _winStart = now;
       }
     } catch (_) {
-      // biarkan jalan terus
     } finally {
       _busy = false;
     }

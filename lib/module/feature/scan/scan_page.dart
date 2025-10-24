@@ -1,4 +1,3 @@
-// scan_page.dart (hanya bagian overlay & painter berbeda)
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
@@ -127,7 +126,7 @@ class _PreviewWithOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pv = controller.value.previewSize!;
-    final srcW = pv.height; // portrait mapping (sesuai postprocess)
+    final srcW = pv.height;
     final srcH = pv.width;
 
     return LayoutBuilder(
@@ -204,10 +203,8 @@ class _DetectionsPainter extends CustomPainter {
         d.box.height * sy,
       );
 
-      // ****** OVAL di sekitar objek ******
       canvas.drawOval(r, paintOval);
 
-      // ****** Label tepat di atas oval ******
       final caption = "${d.label} ${(d.score * 100).toStringAsFixed(1)}%";
       final tp = TextPainter(
         text: TextSpan(text: caption, style: textStyle),
@@ -221,7 +218,7 @@ class _DetectionsPainter extends CustomPainter {
         size.width - tp.width - 8,
       );
       double tagTop = r.top - tp.height - 8;
-      if (tagTop < 0) tagTop = r.top + 2; // kalau kepentok atas, taruh di dalam
+      if (tagTop < 0) tagTop = r.top + 2;
 
       final tag = Rect.fromLTWH(tagLeft, tagTop, tp.width + 8, tp.height + 4);
       canvas.drawRRect(

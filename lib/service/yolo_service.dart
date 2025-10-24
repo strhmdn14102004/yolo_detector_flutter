@@ -1,4 +1,3 @@
-// yolo_service.dart
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
@@ -37,12 +36,17 @@ class YoloService {
   }) async {
     final options = tfl.InterpreterOptions()..threads = 2;
 
-    // if (Platform.isAndroid) {
-    //   try {
-    //     _gpu = tfl.GpuDelegateV2();
-    //     options.addDelegate(_gpu!);
-    //   } catch (_) {}
-    // }
+    if (Platform.isAndroid) {
+      try {
+        _gpu = tfl.GpuDelegateV2();
+        options.addDelegate(_gpu!);
+      } catch (_) {}
+    } else if (Platform.isIOS) {
+      try {
+        final gpu = tfl.GpuDelegate();
+        options.addDelegate(gpu);
+      } catch (_) {}
+    }
 
     _interpreter = await tfl.Interpreter.fromAsset(assetPath, options: options);
     _loaded = true;
@@ -53,7 +57,6 @@ class YoloService {
     _inType = inTensor.type;
     _outType = outTensor.type;
 
-    // input shape NxHxWxC
     if (inTensor.shape.length == 4) {
       inputSize = inTensor.shape[1];
     }
@@ -101,7 +104,6 @@ class YoloService {
     final shape = outTensor.shape;
     late Object output;
 
-    // Two possible shapes: [1,8400,84] or [1,84,8400]
     if (shape.length == 3 && shape[1] == 8400) {
       if (_outType == tfl.TensorType.float32) {
         output = List.generate(

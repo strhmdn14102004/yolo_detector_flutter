@@ -1,11 +1,12 @@
 import 'dart:ui';
+
 import 'package:camera/camera.dart';
 import 'package:equatable/equatable.dart';
 
 enum ScanMode { fast, accurate }
 
 class DetectionResult {
-  final Rect box; // koordinat pada ruang preview (px)
+  final Rect box;
   final String label;
   final double score;
 
@@ -24,11 +25,6 @@ class ScanState extends Equatable {
   final List<DetectionResult> detections;
   final String message;
 
-  // // Tambahan
-  // final ScanMode mode;
-  // final bool smartFallback; // FAST akan auto-fallback/return
-  // final double fps; // moving average FPS
-
   const ScanState({
     required this.isReady,
     required this.isStreaming,
@@ -36,33 +32,24 @@ class ScanState extends Equatable {
     required this.activeCamera,
     required this.detections,
     required this.message,
-    // required this.mode,
-    // required this.smartFallback,
-    // required this.fps,
   });
 
   factory ScanState.initial() => const ScanState(
-        isReady: false,
-        isStreaming: false,
-        cameras: <CameraDescription>[],
-        activeCamera: null,
-        detections: <DetectionResult>[],
-        message: "Memuat…",
-        // mode: ScanMode.fast,
-        // smartFallback: true,
-        // fps: 0.0,
-      );
+    isReady: false,
+    isStreaming: false,
+    cameras: <CameraDescription>[],
+    activeCamera: null,
+    detections: <DetectionResult>[],
+    message: "Memuat…",
+  );
 
   @override
   List<Object?> get props => [
-        isReady,
-        isStreaming,
-        cameras,
-        activeCamera,
-        detections,
-        message,
-        // mode,
-        // smartFallback,
-        // fps,
-      ];
+    isReady,
+    isStreaming,
+    cameras,
+    activeCamera,
+    detections,
+    message,
+  ];
 }
