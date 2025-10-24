@@ -2,13 +2,14 @@
 // ignore_for_file: depend_on_referenced_packages, avoid_types_as_parameter_names
 import 'dart:async';
 import 'dart:io';
+
 import 'package:bloc/bloc.dart';
 import 'package:camera/camera.dart';
+import 'package:face_recognition/service/image_utils.dart';
+import 'package:face_recognition/service/yolo_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'package:face_recognition/service/image_utils.dart';
-import 'package:face_recognition/service/yolo_service.dart';
 import 'scan_event.dart';
 import 'scan_state.dart';
 
@@ -21,7 +22,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
   final int _intervalMs = 140; // ~7 FPS target (praktis di device mid)
 
   // FPS meter
-  int _frames = 0;
   DateTime _winStart = DateTime.now();
 
   ScanBloc({required this.yolo}) : super(ScanState.initial()) {
@@ -139,7 +139,6 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
       add(ScanOnCameraImage(image, rotationDegrees));
     });
 
-    _frames = 0;
     _winStart = DateTime.now();
 
     emit(
@@ -264,12 +263,10 @@ class ScanBloc extends Bloc<ScanEvent, ScanState> {
       );
 
       // FPS window
-      _frames++;
       final dur = now.difference(_winStart).inMilliseconds;
       if (dur >= 1000) {
         // kirim sebagai toast ringan
         // (opsional, kalau mau taruh di AppBar ganti ke state)
-        _frames = 0;
         _winStart = now;
       }
     } catch (_) {
