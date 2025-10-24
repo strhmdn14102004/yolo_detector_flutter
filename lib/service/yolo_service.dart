@@ -21,6 +21,9 @@ class YoloService {
   late final tfl.TensorType _outType;
   late final double _outScale;
   late final int _outZeroPoint;
+  late final List<int> _outShape;
+  late final Object _outputBuffer;
+  Future<void>? _warmupFuture;
 
   final double scoreThreshold;
   final double nmsThreshold;
@@ -68,6 +71,8 @@ class YoloService {
     final outQuant = outTensor.params;
     _outScale = outQuant.scale;
     _outZeroPoint = outQuant.zeroPoint;
+    _outShape = List<int>.from(outTensor.shape);
+    _outputBuffer = _createOutputBuffer();
   }
 
   bool get isLoaded => _loaded;
@@ -88,6 +93,21 @@ class YoloService {
   double get inputScale => _inScale;
   int get inputZeroPoint => _inZeroPoint;
 
+  Future<void> ensureWarmedUp() async {
+    if (!_loaded) {
+      await load();
+    }
+    if (_warmupFuture == null) {
+      _warmupFuture = _runWarmup();
+    }
+    try {
+      await _warmupFuture;
+    } catch (e) {
+      _warmupFuture = null;
+      rethrow;
+    }
+  }
+
   Future<List<_RawDet>> inferNhwc(Object nhwcInput) async {
     if (!_loaded) throw StateError("Interpreter belum dimuat");
 
@@ -100,43 +120,56 @@ class YoloService {
       input = (nhwcInput as Uint8List).reshape([1, inputSize, inputSize, 3]);
     }
 
-    final outTensor = _interpreter.getOutputTensors().first;
-    final shape = outTensor.shape;
-    late Object output;
-
-    if (shape.length == 3 && shape[1] == 8400) {
-      if (_outType == tfl.TensorType.float32) {
-        output = List.generate(
-          1,
-          (_) => List.generate(8400, (_) => List<double>.filled(84, 0)),
-        );
-      } else {
-        output = List.generate(
-          1,
-          (_) => List.generate(8400, (_) => List<int>.filled(84, 0)),
-        );
-      }
-    } else {
-      if (_outType == tfl.TensorType.float32) {
-        output = List.generate(
-          1,
-          (_) => List.generate(84, (_) => List<double>.filled(8400, 0)),
-        );
-      } else {
-        output = List.generate(
-          1,
-          (_) => List.generate(84, (_) => List<int>.filled(8400, 0)),
-        );
-      }
-    }
-
-    _interpreter.run(input, output);
-    return _decodeOutput(output);
+    _interpreter.run(input, _outputBuffer);
+    return _decodeOutput(_outputBuffer);
   }
 
   double _deq(num v) {
     if (_outType == tfl.TensorType.float32) return v.toDouble();
     return _outScale * (v.toDouble() - _outZeroPoint);
+  }
+
+  Object _createOutputBuffer() {
+    Object build(List<int> dims, bool floatOut) {
+      if (dims.isEmpty) {
+        return floatOut
+            ? List<double>.empty(growable: false)
+            : List<int>.empty(growable: false);
+      }
+      if (dims.length == 1) {
+        final size = dims.first;
+        return floatOut
+            ? List<double>.filled(size, 0.0, growable: false)
+            : List<int>.filled(size, 0, growable: false);
+      }
+      final head = dims.first;
+      final tail = dims.sublist(1);
+      return List.generate(
+        head,
+        (_) => build(tail, floatOut),
+        growable: false,
+      );
+    }
+
+    return build(_outShape, _outType == tfl.TensorType.float32);
+  }
+
+  Future<void> _runWarmup() async {
+    final Object input;
+    final int total = inputSize * inputSize * 3;
+    if (_inType == tfl.TensorType.float32) {
+      input = Float32List(total).reshape([1, inputSize, inputSize, 3]);
+    } else if (_inType == tfl.TensorType.int8) {
+      final data = Int8List(total);
+      data.fillRange(0, total, _inZeroPoint);
+      input = data.reshape([1, inputSize, inputSize, 3]);
+    } else {
+      final data = Uint8List(total);
+      data.fillRange(0, total, _inZeroPoint);
+      input = data.reshape([1, inputSize, inputSize, 3]);
+    }
+
+    _interpreter.run(input, _outputBuffer);
   }
 
   List<_RawDet> _decodeOutput(Object outputs) {

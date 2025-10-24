@@ -22,6 +22,8 @@ Object bgra8888ToNhwcQuantAwareCompute(Map<String, dynamic> args) {
   final double sy = height / dst;
 
   final out = _allocOut(targetType, dst);
+  final Float32List? outFloat = out is Float32List ? out : null;
+  final Int8List? outInt8 = out is Int8List ? out : null;
   int k = 0;
 
   for (int y = 0; y < dst; y++) {
@@ -35,10 +37,10 @@ Object bgra8888ToNhwcQuantAwareCompute(Map<String, dynamic> args) {
       final int g = bytes[idx + 1];
       final int r = bytes[idx + 2];
 
-      if (out is Float32List) {
-        out[k++] = r / 255.0;
-        out[k++] = g / 255.0;
-        out[k++] = b / 255.0;
+      if (outFloat != null) {
+        outFloat[k++] = r / 255.0;
+        outFloat[k++] = g / 255.0;
+        outFloat[k++] = b / 255.0;
       } else {
         int rq = (inZeroPoint + (r / 255.0) / inScale).round();
         int gq = (inZeroPoint + (g / 255.0) / inScale).round();
@@ -50,9 +52,9 @@ Object bgra8888ToNhwcQuantAwareCompute(Map<String, dynamic> args) {
         if (gq > 127) gq = 127;
         if (bq < -128) bq = -128;
         if (bq > 127) bq = 127;
-        (out as Int8List)[k++] = rq;
-        out[k++] = gq;
-        out[k++] = bq;
+        outInt8![k++] = rq;
+        outInt8[k++] = gq;
+        outInt8[k++] = bq;
       }
     }
   }
@@ -79,6 +81,8 @@ Object yuv420ToNhwcQuantAwareCompute(Map<String, dynamic> args) {
   final double sy = height / dst;
 
   final out = _allocOut(targetType, dst);
+  final Float32List? outFloat = out is Float32List ? out : null;
+  final Int8List? outInt8 = out is Int8List ? out : null;
   int k = 0;
 
   for (int y = 0; y < dst; y++) {
@@ -107,10 +111,10 @@ Object yuv420ToNhwcQuantAwareCompute(Map<String, dynamic> args) {
       g = _clamp8(g);
       b = _clamp8(b);
 
-      if (out is Float32List) {
-        out[k++] = r / 255.0;
-        out[k++] = g / 255.0;
-        out[k++] = b / 255.0;
+      if (outFloat != null) {
+        outFloat[k++] = r / 255.0;
+        outFloat[k++] = g / 255.0;
+        outFloat[k++] = b / 255.0;
       } else {
         int rq = (inZeroPoint + (r / 255.0) / inScale).round();
         int gq = (inZeroPoint + (g / 255.0) / inScale).round();
@@ -121,9 +125,9 @@ Object yuv420ToNhwcQuantAwareCompute(Map<String, dynamic> args) {
         if (gq > 127) gq = 127;
         if (bq < -128) bq = -128;
         if (bq > 127) bq = 127;
-        (out as Int8List)[k++] = rq;
-        out[k++] = gq;
-        out[k++] = bq;
+        outInt8![k++] = rq;
+        outInt8[k++] = gq;
+        outInt8[k++] = bq;
       }
     }
   }
